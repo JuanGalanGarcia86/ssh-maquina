@@ -56,7 +56,13 @@ Pídelo con naturalidad. Por ejemplo:
 - «Tráete `/var/log/app/app.log` de `app01`»
 - «Ejecuta este script en `app01`»
 
-La primera vez que te conectas a una máquina, Claude te abre una ventana de PuTTY para ella. Autentícate en esa ventana (y acepta la huella si te la pide), **déjala abierta** y avisa a Claude: a partir de ahí ejecuta lo que necesite sin volver a pedirte nada. La sesión del bastión también tiene que seguir abierta, porque es la que da el proxy.
+La primera vez que te conectas a una máquina, Claude te abre una ventana de PuTTY para ella. Autentícate en esa ventana (y acepta la huella si te la pide) y avisa a Claude. Te preguntará si quieres instalar tu clave pública en esa máquina (`-InstallKey`). Si aceptas, desde ese momento entra en ella solo con la clave, sin ventana ni contraseña. La sesión del bastión tiene que seguir abierta, porque es la que da el proxy.
+
+### Acceso con clave
+
+- La plantilla `ssh-plantilla` usa la clave `C:\Users\<usuario>\.ssh\id_ed25519.ppk` (en *Connection > SSH > Auth > Credentials*). plink solo acepta claves en formato `.ppk`: si tu clave está en formato OpenSSH, conviértela con PuTTYgen (*Load* y *Save private key*).
+- `-InstallKey` crea `~/.ssh` (700) y `authorized_keys` (600) si no existen, y añade la clave solo si no estaba ya. Si el home tiene permisos de escritura para grupo u otros, avisa, porque en ese caso `sshd` ignoraría la clave.
+- Comprueba antes que la política de seguridad de tu organización permite claves personales en esos servidores.
 
 ## Uso directo del script
 
@@ -90,7 +96,9 @@ powershell -ExecutionPolicy Bypass -File $s -Target usuario@app01 -JumpHost usua
 | `-Command` | Comando remoto. Escríbelo entre comillas simples de PowerShell. |
 | `-ScriptFile` | Script local que se ejecuta en remoto con `sh -s`. |
 | `-OutFile` | Guarda la salida remota tal cual en este fichero. |
-| `-CheckOnly` | Solo comprueba el acceso. Es lo que hace si no se indica `-Command` ni `-ScriptFile`. |
+| `-CheckOnly` | Solo comprueba el acceso. Es lo que hace si no se indica `-Command`, `-ScriptFile` ni `-InstallKey`. |
+| `-InstallKey` | Añade tu clave pública a `~/.ssh/authorized_keys` del destino. Es idempotente. |
+| `-PublicKeyFile` | Clave pública que instala `-InstallKey` (por defecto `~/.ssh/id_ed25519.pub`). |
 | `-JumpHost` | (OpenSSH) Bastión o bastiones: `usuario@bastion` o `b1,b2`. |
 | `-Port` | (OpenSSH) Puerto SSH del destino. |
 | `-HostKeyAlias` | (OpenSSH) Nombre para `known_hosts` cuando se entra por un túnel local. |
@@ -104,14 +112,14 @@ powershell -ExecutionPolicy Bypass -File $s -Target usuario@app01 -JumpHost usua
 | `0` u otro | Código de salida del comando remoto. |
 | `1` | Error en los parámetros o en el equipo local. |
 | `2` | Fallo de conexión o de autenticación. Con `-Putty`, comprueba que la sesión del bastión (el proxy SOCKS) está abierta. |
-| `4` | (`-Putty`) No había una conexión autenticada para ese host: se ha abierto PuTTY. Autentícate, deja la ventana abierta y vuelve a ejecutar. |
+| `4` | (`-Putty`) El host no acepta la clave y no había una conexión abierta: se ha abierto PuTTY. Autentícate, ejecuta `-InstallKey` si quieres y vuelve a lanzar el comando. |
 
 ## Limitaciones
 
 - Cada ejecución es independiente: `cd` y las variables no se conservan entre comandos. Encadénalos con `;` o `&&`, o usa `-ScriptFile`.
 - No admite programas interactivos (`vi`, `less`, `top` sin `-b`). Usa sus modos por lotes (`cat`, `tail`, `top -bn1`).
 - Si el comando lleva comillas simples dentro, mejor ponlo en un script y usa `-ScriptFile`.
-- La conexión compartida solo funciona mientras sigan abiertas tanto la ventana de PuTTY del host como la del bastión.
+- En hosts sin clave instalada, la conexión compartida solo funciona mientras sigan abiertas la ventana de PuTTY del host y la del bastión. Con clave instalada basta con la del bastión.
 
 ## Seguridad
 

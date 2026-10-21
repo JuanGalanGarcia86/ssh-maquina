@@ -18,6 +18,8 @@
   .\Invoke-Ssh.ps1 -Target oa1.tf2hcs1c1.cdn -Putty -Command 'cat /var/log/app.log' -OutFile .\app.log
 .EXAMPLE
   .\Invoke-Ssh.ps1 -Target app01 -JumpHost user@bastion -ScriptFile .\diag.sh
+.EXAMPLE
+  .\Invoke-Ssh.ps1 -Target app01.ejemplo.local -Putty -InstallKey        # deja la clave pública instalada en el host
 
   Códigos de salida: el del comando remoto · 1 parámetros/local · 2 conexión o autenticación
                      4 (-Putty) se ha abierto PuTTY: el usuario debe autenticarse y después se reintenta
@@ -35,6 +37,8 @@ param(
     [string]$ScriptFile,                             # script local que se ejecuta en remoto con "sh -s" (stdin)
     [string]$OutFile,                                # guardar la salida tal cual (binario) en este fichero
     [switch]$CheckOnly,                              # solo comprobar acceso (por defecto si no hay -Command/-ScriptFile)
+    [switch]$InstallKey,                             # añadir la clave pública a ~/.ssh/authorized_keys del destino (idempotente)
+    [string]$PublicKeyFile = "$env:USERPROFILE\.ssh\id_ed25519.pub",
     [int]$ConnectTimeout = 15,
     [int]$TimeoutSec = 600
 )
@@ -47,7 +51,9 @@ $puttyRoot = 'HKCU:\Software\SimonTatham\PuTTY\Sessions'
 
 if ($Command -and $ScriptFile) { Fail 1 'Usa -Command o -ScriptFile, no ambos' }
 if ($ScriptFile -and -not (Test-Path -LiteralPath $ScriptFile)) { Fail 1 "No existe el script '$ScriptFile'" }
-if (-not $Command -and -not $ScriptFile) { $CheckOnly = $true }
+if ($InstallKey -and ($Command -or $ScriptFile)) { Fail 1 'Usa -InstallKey solo, sin -Command ni -ScriptFile' }
+if ($InstallKey -and -not (Test-Path -LiteralPath $PublicKeyFile)) { Fail 1 "No existe la clave pública '$PublicKeyFile'" }
+if (-not $Command -and -not $ScriptFile -and -not $InstallKey) { $CheckOnly = $true }
 
 # --- Selección de vía -------------------------------------------------------------------------
 if ($Putty) {
@@ -162,16 +168,30 @@ if ($CheckOnly) {
     $check = 'echo "sistema=$(uname -srm)"; echo "host=$(hostname)"; id; date "+hora_remota=%Y-%m-%d %H:%M:%S %Z %z"; ' +
              'if sudo -n true 2>/dev/null; then echo sudo_sin_password=si; else echo sudo_sin_password=no; fi'
     $remote = "sh -c '$check'"
-} elseif ($ScriptFile) {
+} elseif ($ScriptFile -or $InstallKey) {
     $remote = 'sh -s'
 } else {
     $remote = $Command
 }
 
+$utf8 = New-Object System.Text.UTF8Encoding($false)
 $stdin = $null
 if ($ScriptFile) {
-    $utf8 = New-Object System.Text.UTF8Encoding($false)
-    $stdin = $utf8.GetBytes(([IO.File]::ReadAllText((Resolve-Path -LiteralPath $ScriptFile), $utf8) -replace "`r`n", "`n"))
+    $text = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $ScriptFile), $utf8)
+    $stdin = $utf8.GetBytes(($text.TrimStart([char]0xFEFF) -replace "`r`n", "`n"))
+} elseif ($InstallKey) {
+    $pub = ([IO.File]::ReadAllText((Resolve-Path -LiteralPath $PublicKeyFile), $utf8)).Trim()
+    if ($pub -notmatch '^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp\d+) [A-Za-z0-9+/=]+( [^\r\n'']*)?$') { Fail 1 "'$PublicKeyFile' no parece una clave pública OpenSSH" }
+    # Idempotente: crea ~/.ssh y authorized_keys con permisos 700/600 y añade la clave solo si no estaba.
+    $install = @(
+        'umask 077'
+        'mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh" || exit 1'
+        "k='$pub'"
+        'touch "$HOME/.ssh/authorized_keys" && chmod 600 "$HOME/.ssh/authorized_keys" || exit 1'
+        'if grep -qxF "$k" "$HOME/.ssh/authorized_keys"; then echo "clave_ya_instalada"; else printf ''%s\n'' "$k" >> "$HOME/.ssh/authorized_keys" && echo "clave_instalada"; fi'
+        'if [ -n "$(find "$HOME" -maxdepth 0 -perm /022)" ]; then echo "AVISO: el home tiene permisos de escritura para grupo/otros; sshd puede ignorar la clave"; fi'
+    ) -join "`n"
+    $stdin = $utf8.GetBytes($install + "`n")
 }
 
 Write-Host "Conectando a $label..."
@@ -188,6 +208,7 @@ if ($plinkFatal -and $r.StdErr -match 'interactive prompts|host key') {
         Write-Host "La ventana PuTTY de '$PuttySession' está abierta pero aún no autenticada."
     }
     Write-Host 'Autentícate en esa ventana (acepta la huella si es la primera vez), déjala abierta y vuelve a ejecutar.'
+    Write-Host 'Para no volver a necesitar la ventana en este host, ejecuta después una vez con -InstallKey.'
     exit 4
 }
 if ($r.ExitCode -eq 255 -or $r.ExitCode -eq 124 -or $plinkFatal) {

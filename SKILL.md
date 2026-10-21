@@ -16,16 +16,23 @@ Sin `-Command` ni `-ScriptFile`, solo comprueba el acceso y muestra el sistema, 
 ## Elegir la vía
 
 **PuTTY (`-Putty`), la habitual en este equipo.** Úsala si existe la sesión PuTTY `ssh-plantilla` en `HKCU\Software\SimonTatham\PuTTY\Sessions`.
-- La plantilla tiene el usuario, el proxy SOCKS5 `127.0.0.1:1080` y la conexión compartida activada. El proxy es el reenvío dinámico de la sesión PuTTY *Salto*, que el usuario tiene que tener abierta.
+- La plantilla tiene el usuario, el proxy SOCKS5 `127.0.0.1:1080`, la clave `~/.ssh/id_ed25519.ppk` y la conexión compartida activada. El proxy es el reenvío dinámico de la sesión PuTTY *Salto*, que el usuario tiene que tener abierta.
 - El script crea o actualiza la sesión `ssh-<host>` a partir de la plantilla. Si pasas `usuario@host`, cambia el usuario.
-- plink reutiliza la conexión que el usuario tenga abierta y autenticada en PuTTY para ese host.
+- **Hosts con la clave instalada:** plink entra solo con la clave, sin ventana ni contraseña.
+- **Hosts sin clave:** plink reutiliza la conexión que el usuario tenga abierta en PuTTY para ese host. Si no hay ninguna, el script abre PuTTY y devuelve el código 4.
+
+**Primera vez en un host (código 4):**
+1. Pide al usuario que se autentique en la ventana de PuTTY que se ha abierto y que te avise.
+2. Pregúntale si quiere que instales su clave en ese host para no necesitar la ventana la próxima vez. Instalarla modifica la máquina, así que confírmalo cada vez.
+3. Si dice que sí, ejecuta una vez `-Target <host> -Putty -InstallKey`. Añade la clave pública a `~/.ssh/authorized_keys` sin duplicarla y deja los permisos en 700/600.
+4. A partir de ahí ese host no necesita ventana y el usuario puede cerrar la de PuTTY.
 
 **OpenSSH (sin `-Putty`)**, para máquinas con autenticación por clave: `-Target <host|usuario@host|alias> [-JumpHost usuario@bastion] [-Port N]`.
 
 ## Códigos de salida
 
 - **0 u otro número**: es el código de salida del comando remoto.
-- **4** (`-Putty`): no había una conexión autenticada para ese host y el script ha abierto la ventana de PuTTY. Pide al usuario que se autentique allí (y que acepte la huella si es la primera vez), que deje la ventana abierta y te avise. Después repite el mismo comando.
+- **4** (`-Putty`): el host no acepta la clave y no había una conexión abierta, así que el script ha abierto PuTTY. Pide al usuario que se autentique allí (y que acepte la huella si es la primera vez) y te avise. Después ejecuta `-InstallKey` y repite el comando.
 - **2**: fallo de conexión o de autenticación. Explica al usuario el motivo que muestra el script. Con `-Putty`, lo primero es comprobar que la sesión *Salto* está abierta.
 - **1**: error en los parámetros.
 
