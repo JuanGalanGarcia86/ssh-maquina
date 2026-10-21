@@ -116,7 +116,12 @@ function Invoke-Remote([string]$RemoteCommand, [byte[]]$Stdin, [string]$StdoutFi
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $true
-    $p = [System.Diagnostics.Process]::Start($psi)
+    # .NET Framework crea StandardInput con Console.InputEncoding; si es UTF-8 con preámbulo, antepone un BOM
+    # a lo que se envía por stdin (en remoto: "sh: line 1: ﻿: command not found"). Se fuerza UTF-8 sin BOM al arrancar.
+    $prevIn = $null
+    try { $prevIn = [Console]::InputEncoding; [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+    try { $p = [System.Diagnostics.Process]::Start($psi) }
+    finally { if ($prevIn) { try { [Console]::InputEncoding = $prevIn } catch { } } }
     $errTask = $p.StandardError.ReadToEndAsync()
     $fs = $null
     if ($StdoutFile) { $fs = [IO.File]::Create($StdoutFile); $outTask = $p.StandardOutput.BaseStream.CopyToAsync($fs) }
